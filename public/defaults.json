@@ -1,43 +1,43 @@
 {
-  "seats": { "salesAe": 200, "sdr": 80, "se": 50, "salesOps": 40, "cs": 150, "ps": 75, "support": 110, "pmm": 18, "mktg": 100, "readonly": 60 },
+  "seats": { "salesAe": 150, "sdr": 50, "se": 50, "salesOps": 20, "cs": 100, "ps": 75, "support": 75, "pmm": 20, "mktg": 50, "readonly": 50 },
   "seatGrowth": 0.08,
 
-  "sfSalesCloud": 165, "sfServiceCloud": 165, "sfCpq": 75, "sfPlatform": 25,
-  "sfDiscount": 0.30, "sfAddons": 450000, "sfUplift": 0.07,
-  "sfAdminFte": 8, "sfSiSpend": 600000, "sfIsvSpend": 350000, "sfContractLockYears": 0,
+  "sfSalesCloud": 500, "sfServiceCloud": 500, "sfCpq": 150, "sfPlatform": 100,
+  "sfDiscount": 0.30, "sfAddons": 0, "sfUplift": 0.07,
+  "sfAdminFte": 5, "sfSiSpend": 100000, "sfIsvSpend": 0, "sfContractLockYears": 0,
 
   "team": [
-    { "id": "arch",   "label": "Eng lead / architect",     "b": 2,   "r": 1,   "base": 260000 },
-    { "id": "be",     "label": "Backend engineers",        "b": 9,   "r": 5,   "base": 205000 },
-    { "id": "fe",     "label": "Frontend engineers",       "b": 4,   "r": 2.5, "base": 195000 },
-    { "id": "mob",    "label": "Mobile engineers",         "b": 3,   "r": 1.5, "base": 200000 },
-    { "id": "data",   "label": "Data / integration eng",   "b": 3,   "r": 2,   "base": 210000 },
-    { "id": "sre",    "label": "SRE / platform",           "b": 3,   "r": 4,   "base": 215000 },
+    { "id": "arch",   "label": "Eng lead / architect",     "b": 1,   "r": 1,   "base": 260000 },
+    { "id": "be",     "label": "Backend engineers",        "b": 3,   "r": 2,   "base": 205000 },
+    { "id": "fe",     "label": "Frontend engineers",       "b": 1,   "r": 1, "base": 195000 },
+    { "id": "mob",    "label": "Mobile engineers",         "b": 1,   "r": 0.5, "base": 200000 },
+    { "id": "data",   "label": "Data / integration eng",   "b": 3,   "r": 1,   "base": 210000 },
+    { "id": "sre",    "label": "SRE / platform",           "b": 2,   "r": 3,   "base": 215000 },
     { "id": "sec",    "label": "Security engineer",        "b": 1,   "r": 1.5, "base": 225000 },
-    { "id": "qa",     "label": "QA / test automation",     "b": 3,   "r": 2,   "base": 165000 },
+    { "id": "qa",     "label": "QA / test automation",     "b": 2,   "r": 1,   "base": 165000 },
     { "id": "pm",     "label": "Product manager",          "b": 2,   "r": 1,   "base": 230000 },
-    { "id": "design", "label": "Designer",                 "b": 2,   "r": 0.5, "base": 190000 },
+    { "id": "design", "label": "Designer",                 "b": 1,   "r": 0.5, "base": 190000 },
     { "id": "grc",    "label": "Compliance / GRC",         "b": 0.5, "r": 1,   "base": 175000 },
     { "id": "itsup",  "label": "Internal support / admin", "b": 1,   "r": 3,   "base": 130000 }
   ],
-  "loadMult": 1.32, "geoBlend": 1.0, "buildMonths": 18, "parallelMonths": 6,
+  "loadMult": 1.32, "geoBlend": 0.7, "buildMonths":18, "parallelMonths": 3,
 
-  "aiVelocity": 2.2, "aiSeatCost": 2400, "aiInference": 180000, "aiSustainLift": 1.4,
+  "aiVelocity": 5.0, "aiSeatCost": 6000, "aiInference": 100000, "aiSustainLift": 3,
 
-  "migration": 850000, "integrations": 6, "integrationCost": 180000,
-  "pentest": 120000, "soc2Setup": 260000, "isoSetup": 190000, "gdprArch": 320000,
-  "changeMgmtPerSeat": 380,
+  "migration": 200000, "integrations": 5, "integrationCost": 5000,
+  "pentest": 30000, "soc2Setup": 40000, "isoSetup": 10000, "gdprArch": 20000,
+  "changeMgmtPerSeat": 10,
 
-  "cloudProvider": "gcp", "regions": 3, "haMode": "active-active",
+  "cloudProvider": "gcp", "regions": 2, "haMode": "active-passive", "haCost": 0.25, "haFailPct": 0.05,
   "cudDiscount": 0.37, "nonProdEnvs": 3,
-  "observability": 240000, "complianceAnnual": 310000, "techDebtPct": 0.15,
+  "observability": 50000, "complianceAnnual": 100000, "techDebtPct": 0.15,
 
   "vAccounts": 100000, "vContacts": 500000, "vOpps": 200000, "vActivities": 10000000,
   "retentionYears": 7,
 
-  "rSchedule": 1.6, "rCost": 1.4, "rPartialFail": 0.25, "rFullFail": 0.10,
+  "rSchedule": 1.2, "rCost": 1.2, "rPartialFail": 0.25, "rFullFail": 0.10,
   "rAttrition": 0.15, "rProductivityDip": 0.05, "rRevenue": 400000000,
-  "rComplianceDelay": 0.30, "rFeatureGap": 0.20,
+  "rComplianceDelay": 0.20, "rFeatureGap": 0.10,
 
   "discountRate": 0.10
 }

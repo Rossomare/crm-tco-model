@@ -563,9 +563,16 @@ function CrmTcoModelInner({ defaults }: { defaults: Assumptions }) {
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: T.brass, letterSpacing: "0.22em", textTransform: "uppercase", marginBottom: 7 }}>
               Build vs Buy · Decision Instrument
             </div>
-            <h1 style={{ margin: 0, fontSize: 29, fontWeight: 300, letterSpacing: "-0.025em", lineHeight: 1 }}>
-              CRM Total Cost of Ownership
-            </h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h1 style={{ margin: 0, fontSize: 29, fontWeight: 300, letterSpacing: "-0.025em", lineHeight: 1 }}>
+                CRM Total Cost of Ownership
+              </h1>
+              <span style={{
+                fontFamily: "ui-monospace, monospace", fontSize: 10, fontWeight: 600,
+                color: T.warn, border: `1px solid ${T.warn}`, borderRadius: 2,
+                padding: "2px 7px", letterSpacing: "0.08em", textTransform: "uppercase",
+              }}>Beta</span>
+            </div>
             <div style={{ fontSize: 12, color: T.textFaint, marginTop: 8, maxWidth: 580, lineHeight: 1.55 }}>
               Models replacing a commercial CRM with an internally owned, AI-assisted build. Every default
               is a benchmark, not a measurement. Replace them with your own contract and payroll data
