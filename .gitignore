@@ -6,3 +6,4 @@ dist-ssr
 .DS_Store
 .tmp.driveupload/
 .tmp.drivedownload/
+*.tsbuildinfo

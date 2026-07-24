@@ -2,7 +2,7 @@
 
 **Version 1.0** · Last updated July 2026
 
-This document specifies the model implemented in `crm-tco-model.jsx`. It is written for two audiences: someone deciding whether to trust the tool's output, and someone modifying or forking it.
+This document specifies the model implemented in `src/App.tsx`. It is written for two audiences: someone deciding whether to trust the tool's output, and someone modifying or forking it.
 
 ---
 

@@ -1,15 +1,93 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Cell, ComposedChart
 } from "recharts";
 
 /* ============================================================
+   TYPES
+   ============================================================ */
+interface Seats {
+  salesAe: number; sdr: number; se: number; salesOps: number; cs: number;
+  ps: number; support: number; pmm: number; mktg: number; readonly: number;
+}
+
+interface TeamMember {
+  id: string; label: string; b: number; r: number; base: number;
+}
+
+type CloudProvider = "gcp" | "aws" | "azure";
+type HaMode = "active-active" | "active-passive";
+
+interface Assumptions {
+  seats: Seats;
+  seatGrowth: number;
+  sfSalesCloud: number; sfServiceCloud: number; sfCpq: number; sfPlatform: number;
+  sfDiscount: number; sfAddons: number; sfUplift: number;
+  sfAdminFte: number; sfSiSpend: number; sfIsvSpend: number; sfContractLockYears: number;
+  team: TeamMember[];
+  loadMult: number; geoBlend: number; buildMonths: number; parallelMonths: number;
+  aiVelocity: number; aiSeatCost: number; aiInference: number; aiSustainLift: number;
+  migration: number; integrations: number; integrationCost: number;
+  pentest: number; soc2Setup: number; isoSetup: number; gdprArch: number;
+  changeMgmtPerSeat: number;
+  cloudProvider: CloudProvider; regions: number; haMode: HaMode;
+  cudDiscount: number; nonProdEnvs: number;
+  observability: number; complianceAnnual: number; techDebtPct: number;
+  vAccounts: number; vContacts: number; vOpps: number; vActivities: number;
+  retentionYears: number;
+  rSchedule: number; rCost: number; rPartialFail: number; rFullFail: number;
+  rAttrition: number; rProductivityDip: number; rRevenue: number;
+  rComplianceDelay: number; rFeatureGap: number;
+  discountRate: number;
+}
+
+type ThemeMode = "dark" | "light";
+
+interface ThemeColors {
+  bg: string; surface: string; surface2: string; rule: string;
+  text: string; textDim: string; textFaint: string;
+  brass: string; oxide: string; slate: string;
+  good: string; warn: string; inputBg: string; shadow: string;
+}
+
+interface DictEntry { d: string; s: string; g: string; }
+
+interface BuyYearRow { year: number; licenses: number; addons: number; admin: number; si: number; isv: number; total: number; }
+interface BuildYearRow { year: number; oneTime: number; cloud: number; sustain: number; obs: number; comp: number; aiRun: number; debt: number; legacy: number; total: number; }
+interface CumulativeRow { year: number; buy: number; build: number; }
+interface RiskItem { label: string; v: number; }
+
+interface ModelResult {
+  buy: BuyYearRow[];
+  build: BuildYearRow[];
+  cumulative: CumulativeRow[];
+  baseBuyTotal: number;
+  baseBuildTotal: number;
+  buildExpected: number;
+  riskItems: RiskItem[];
+  riskTotal: number;
+  npvBuy: number;
+  npvBuild: number;
+  beYear: number | null;
+  oneTime: number;
+  buildLabor: number;
+  cloudY1: number;
+  effBuildMonths: number;
+  buildEngHeads: number;
+  runEngHeads: number;
+  runTeamAnnual: number;
+  seatsY0: number;
+  buyPerSeatY1: number;
+  licPerSeatY1: number;
+}
+
+/* ============================================================
    THEME
    Two palettes, same structural logic.
    Brass = incumbent (buy) path. Oxide = build path. Both modes.
    ============================================================ */
-const THEMES = {
+const THEMES: Record<ThemeMode, ThemeColors> = {
   dark: {
     bg: "#12161C", surface: "#1A2028", surface2: "#232B35", rule: "#2E3846",
     text: "#E8E4DA", textDim: "#9AA3B0", textFaint: "#5C6674",
@@ -26,22 +104,23 @@ const THEMES = {
   },
 };
 
-const fmtM = (n) => {
+const fmtM = (n: number): string => {
   const a = Math.abs(n);
   if (a >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (a >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
   if (a >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
   return `$${n.toFixed(0)}`;
 };
-const fmtN = (n) => Math.round(n).toLocaleString("en-US");
-const pct = (n) => `${(n * 100).toFixed(0)}%`;
+const fmtN = (n: number): string => Math.round(n).toLocaleString("en-US");
+const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
+const MAX_W = 1120;
 
 /* ============================================================
    VARIABLE DICTIONARY
    d = what it is, s = where the default came from,
    g = how to replace it with your own data
    ============================================================ */
-const DICT = {
+const DICT: Record<string, DictEntry> = {
   salesAe: { d: "Account executives plus first- and second-line sales leadership. Anyone carrying or managing a quota.", s: "Seeded from a typical B2B software org at roughly 1,500 employees.", g: "Pull from your HRIS by job family, not by cost center." },
   sdr: { d: "Sales development and business development reps doing inbound or outbound prospecting.", s: "Typical ratio is one SDR per 1.5 to 2 AEs.", g: "If you use an agency or offshore SDR model, count only seats that touch the CRM." },
   se: { d: "Sales engineers and solutions consultants supporting deals technically.", s: "Common staffing is one SE per 3 to 4 AEs.", g: "SEs almost always need full licenses, not read-only." },
@@ -111,57 +190,13 @@ const DICT = {
   discountRate: { d: "Rate used to discount future cash flows to present value.", s: "10 percent is a common corporate default.", g: "Ask finance for your weighted average cost of capital. Higher rates favor deferring spend, which favors buying." },
 };
 
-/* ============================================================
-   DEFAULTS
-   ============================================================ */
-const D = {
-  seats: { salesAe: 200, sdr: 80, se: 50, salesOps: 40, cs: 150, ps: 75, support: 110, pmm: 18, mktg: 100, readonly: 60 },
-  seatGrowth: 0.08,
-
-  sfSalesCloud: 165, sfServiceCloud: 165, sfCpq: 75, sfPlatform: 25,
-  sfDiscount: 0.30, sfAddons: 450000, sfUplift: 0.07,
-  sfAdminFte: 8, sfSiSpend: 600000, sfIsvSpend: 350000, sfContractLockYears: 0,
-
-  team: [
-    { id: "arch",   label: "Eng lead / architect",     b: 2,   r: 1,   base: 260000 },
-    { id: "be",     label: "Backend engineers",        b: 9,   r: 5,   base: 205000 },
-    { id: "fe",     label: "Frontend engineers",       b: 4,   r: 2.5, base: 195000 },
-    { id: "mob",    label: "Mobile engineers",         b: 3,   r: 1.5, base: 200000 },
-    { id: "data",   label: "Data / integration eng",   b: 3,   r: 2,   base: 210000 },
-    { id: "sre",    label: "SRE / platform",           b: 3,   r: 4,   base: 215000 },
-    { id: "sec",    label: "Security engineer",        b: 1,   r: 1.5, base: 225000 },
-    { id: "qa",     label: "QA / test automation",     b: 3,   r: 2,   base: 165000 },
-    { id: "pm",     label: "Product manager",          b: 2,   r: 1,   base: 230000 },
-    { id: "design", label: "Designer",                 b: 2,   r: 0.5, base: 190000 },
-    { id: "grc",    label: "Compliance / GRC",         b: 0.5, r: 1,   base: 175000 },
-    { id: "itsup",  label: "Internal support / admin", b: 1,   r: 3,   base: 130000 },
-  ],
-  loadMult: 1.32, geoBlend: 1.0, buildMonths: 18, parallelMonths: 6,
-
-  aiVelocity: 2.2, aiSeatCost: 2400, aiInference: 180000, aiSustainLift: 1.4,
-
-  migration: 850000, integrations: 6, integrationCost: 180000,
-  pentest: 120000, soc2Setup: 260000, isoSetup: 190000, gdprArch: 320000,
-  changeMgmtPerSeat: 380,
-
-  cloudProvider: "gcp", regions: 3, haMode: "active-active",
-  cudDiscount: 0.37, nonProdEnvs: 3,
-  observability: 240000, complianceAnnual: 310000, techDebtPct: 0.15,
-
-  vAccounts: 100000, vContacts: 500000, vOpps: 200000, vActivities: 10000000,
-  retentionYears: 7,
-
-  rSchedule: 1.6, rCost: 1.4, rPartialFail: 0.25, rFullFail: 0.10,
-  rAttrition: 0.15, rProductivityDip: 0.05, rRevenue: 400000000,
-  rComplianceDelay: 0.30, rFeatureGap: 0.20,
-
-  discountRate: 0.10,
-};
+// Default assumptions live in /public/defaults.json and are fetched at
+// runtime, so they can be changed without touching component code.
 
 /* ============================================================
    CLOUD SIZING
    ============================================================ */
-function cloudAnnual(s) {
+function cloudAnnual(s: Assumptions): number {
   const totalSeats = Object.values(s.seats).reduce((a, b) => a + b, 0);
   const records = s.vAccounts + s.vContacts + s.vOpps + s.vActivities;
 
@@ -192,11 +227,11 @@ function cloudAnnual(s) {
 /* ============================================================
    MODEL
    ============================================================ */
-function runModel(s, years) {
+function runModel(s: Assumptions, years: number): ModelResult {
   const seatsY0 = Object.values(s.seats).reduce((a, b) => a + b, 0);
-  const loaded = (base) => base * s.loadMult * s.geoBlend;
+  const loaded = (base: number) => base * s.loadMult * s.geoBlend;
 
-  const seatsAt = (y) => {
+  const seatsAt = (y: number) => {
     const g = Math.pow(1 + s.seatGrowth, y);
     return {
       full: (s.seats.salesAe + s.seats.sdr + s.seats.se + s.seats.salesOps + s.seats.cs) * g,
@@ -207,7 +242,7 @@ function runModel(s, years) {
     };
   };
 
-  const buy = [];
+  const buy: BuyYearRow[] = [];
   for (let y = 0; y < years; y++) {
     const st = seatsAt(y);
     const uplift = Math.pow(1 + s.sfUplift, y);
@@ -240,7 +275,7 @@ function runModel(s, years) {
     buildEngHeads * s.aiSeatCost * (effBuildMonths / 12);
 
   const cloudY1 = cloudAnnual(s);
-  const build = [];
+  const build: BuildYearRow[] = [];
   const buildYears = Math.max(1, Math.ceil(effBuildMonths / 12));
   const parallelYears = s.parallelMonths / 12;
 
@@ -275,7 +310,7 @@ function runModel(s, years) {
   const baseBuildTotal = build.reduce((a, r) => a + r.total, 0);
   const baseBuyTotal = buy.reduce((a, r) => a + r.total, 0);
 
-  const riskItems = [
+  const riskItems: RiskItem[] = [
     { label: "Schedule overrun", v: buildLabor * (s.rSchedule - 1) },
     { label: "Cost overrun", v: (oneTime - buildLabor) * (s.rCost - 1) },
     { label: "Late feature gaps", v: oneTime * s.rFeatureGap },
@@ -286,12 +321,12 @@ function runModel(s, years) {
     { label: "Full failure (weighted)", v: s.rFullFail * (oneTime + baseBuyTotal * 0.25) },
   ];
   const riskTotal = riskItems.reduce((a, r) => a + r.v, 0);
-  const npv = (rows) => rows.reduce((a, r, i) => a + r.total / Math.pow(1 + s.discountRate, i), 0);
+  const npv = (rows: { total: number }[]) => rows.reduce((a, r, i) => a + r.total / Math.pow(1 + s.discountRate, i), 0);
   const buildExpected = baseBuildTotal + riskTotal;
 
   const riskPerYear = riskTotal / years;
-  let cumBuy = 0, cumBuild = 0, beYear = null;
-  const cumulative = build.map((b, i) => {
+  let cumBuy = 0, cumBuild = 0, beYear: number | null = null;
+  const cumulative: CumulativeRow[] = build.map((b, i) => {
     cumBuy += buy[i].total;
     cumBuild += b.total + riskPerYear;
     if (beYear === null && cumBuild <= cumBuy) beYear = i + 1;
@@ -312,7 +347,7 @@ function runModel(s, years) {
 /* ============================================================
    UI PRIMITIVES
    ============================================================ */
-function Info({ k, T }) {
+function Info({ k, T }: { k: string; T: ThemeColors }) {
   const [open, setOpen] = useState(false);
   const e = DICT[k];
   if (!e) return null;
@@ -354,7 +389,7 @@ function Info({ k, T }) {
   );
 }
 
-function Field({ label, k, hint, T, children }) {
+function Field({ label, k, hint, T, children }: { label: string; k?: string; hint?: string; T: ThemeColors; children: ReactNode }) {
   return (
     <label style={{ display: "block", marginBottom: 14 }}>
       <span style={{
@@ -369,13 +404,13 @@ function Field({ label, k, hint, T, children }) {
   );
 }
 
-const inputS = (T) => ({
+const inputS = (T: ThemeColors): React.CSSProperties => ({
   width: "100%", background: T.inputBg, border: `1px solid ${T.rule}`,
   color: T.text, padding: "7px 9px", fontSize: 13,
   fontFamily: "ui-monospace, monospace", borderRadius: 2, outline: "none",
 });
 
-function Num({ value, onChange, step = 1, prefix, suffix, T }) {
+function Num({ value, onChange, step = 1, prefix, suffix, T }: { value: number; onChange: (v: number) => void; step?: number; prefix?: string; suffix?: string; T: ThemeColors }) {
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
       {prefix && <span style={{ color: T.textFaint, fontSize: 12, fontFamily: "ui-monospace, monospace" }}>{prefix}</span>}
@@ -386,7 +421,7 @@ function Num({ value, onChange, step = 1, prefix, suffix, T }) {
   );
 }
 
-function Slider({ value, onChange, min, max, step, display, T }) {
+function Slider({ value, onChange, min, max, step, display, T }: { value: number; onChange: (v: number) => void; min: number; max: number; step: number; display: string; T: ThemeColors }) {
   return (
     <span style={{ display: "block" }}>
       <input type="range" min={min} max={max} step={step} value={value}
@@ -399,7 +434,7 @@ function Slider({ value, onChange, min, max, step, display, T }) {
   );
 }
 
-function Group({ title, num, note, T, children }) {
+function Group({ title, num, note, T, children }: { title: string; num: string; note?: string; T: ThemeColors; children: ReactNode }) {
   return (
     <div style={{ marginBottom: 36 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, borderBottom: `1px solid ${T.rule}`, paddingBottom: 8, marginBottom: 14 }}>
@@ -412,7 +447,7 @@ function Group({ title, num, note, T, children }) {
   );
 }
 
-function Stat({ label, value, tone, sub, T }) {
+function Stat({ label, value, tone, sub, T }: { label: string; value: string; tone?: string; sub?: string; T: ThemeColors }) {
   return (
     <div style={{ flex: 1, minWidth: 148 }}>
       <div style={{ fontSize: 10, letterSpacing: "0.09em", textTransform: "uppercase", color: T.textDim, marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>{label}</div>
@@ -422,7 +457,7 @@ function Stat({ label, value, tone, sub, T }) {
   );
 }
 
-function SecHead({ children, T }) {
+function SecHead({ children, T }: { children: ReactNode; T: ThemeColors }) {
   return (
     <div style={{
       fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: T.textDim,
@@ -436,16 +471,34 @@ function SecHead({ children, T }) {
    APP
    ============================================================ */
 export default function CrmTcoModel() {
-  const [mode, setMode] = useState("dark");
-  const T = THEMES[mode];
-  const [s, setS] = useState(D);
-  const [years, setYears] = useState(5);
-  const [tab, setTab] = useState("output");
-  const [view, setView] = useState("summary");
+  const [defaults, setDefaults] = useState<Assumptions | null>(null);
+  useEffect(() => {
+    fetch("/defaults.json").then((r) => r.json()).then(setDefaults);
+  }, []);
 
-  const set = (k, v) => setS((p) => ({ ...p, [k]: v }));
-  const setSeat = (k, v) => setS((p) => ({ ...p, seats: { ...p.seats, [k]: v } }));
-  const setTeam = (id, f, v) => setS((p) => ({ ...p, team: p.team.map((t) => t.id === id ? { ...t, [f]: v } : t) }));
+  if (!defaults) {
+    const T = THEMES.light;
+    return (
+      <div style={{ background: T.bg, minHeight: "100vh", color: T.textDim, fontFamily: "'Inter', -apple-system, system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>
+        Loading…
+      </div>
+    );
+  }
+
+  return <CrmTcoModelInner defaults={defaults} />;
+}
+
+function CrmTcoModelInner({ defaults }: { defaults: Assumptions }) {
+  const [mode, setMode] = useState<ThemeMode>("light");
+  const T = THEMES[mode];
+  const [s, setS] = useState<Assumptions>(defaults);
+  const [years, setYears] = useState(5);
+  const [tab, setTab] = useState<"output" | "config">("output");
+  const [view, setView] = useState<"summary" | "flow" | "risk" | "cloud" | "ledger">("summary");
+
+  const set = <K extends keyof Assumptions>(k: K, v: Assumptions[K]) => setS((p) => ({ ...p, [k]: v }));
+  const setSeat = (k: keyof Seats, v: number) => setS((p) => ({ ...p, seats: { ...p.seats, [k]: v } }));
+  const setTeam = (id: string, f: "b" | "r" | "base", v: number) => setS((p) => ({ ...p, team: p.team.map((t) => t.id === id ? { ...t, [f]: v } : t) }));
 
   const m3 = useMemo(() => runModel(s, 3), [s]);
   const m5 = useMemo(() => runModel(s, 5), [s]);
@@ -453,13 +506,7 @@ export default function CrmTcoModel() {
   const m = years === 3 ? m3 : years === 5 ? m5 : m7;
 
   const cloudCompare = useMemo(() =>
-    ["gcp", "aws", "azure"].map((p) => ({ provider: p.toUpperCase(), cost: cloudAnnual({ ...s, cloudProvider: p }) })), [s]);
-
-  const applyPreset = (n) => {
-    if (n === "conservative") setS((p) => ({ ...p, aiVelocity: 1.5, aiSustainLift: 1.15, rSchedule: 1.9, rCost: 1.6, rFullFail: 0.15, rPartialFail: 0.32, buildMonths: 24, techDebtPct: 0.22 }));
-    if (n === "base") setS(D);
-    if (n === "aggressive") setS((p) => ({ ...p, aiVelocity: 3.2, aiSustainLift: 1.8, rSchedule: 1.25, rCost: 1.15, rFullFail: 0.05, rPartialFail: 0.14, buildMonths: 14, techDebtPct: 0.10 }));
-  };
+    (["gcp", "aws", "azure"] as CloudProvider[]).map((p) => ({ provider: p.toUpperCase(), cost: cloudAnnual({ ...s, cloudProvider: p }) })), [s]);
 
   const chartData = m.build.map((b, i) => ({ year: `Y${i + 1}`, Buy: Math.round(m.buy[i].total), Build: Math.round(b.total + m.riskTotal / years) }));
   const cumData = m.cumulative.map((c) => ({ year: `Y${c.year}`, Buy: Math.round(c.buy), Build: Math.round(c.build) }));
@@ -469,9 +516,12 @@ export default function CrmTcoModel() {
   const buildWins = delta < 0;
   const horizons = [{ y: 3, mm: m3 }, { y: 5, mm: m5 }, { y: 7, mm: m7 }];
 
-  const thS = { textAlign: "left", padding: "9px 8px", fontSize: 10, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 400, fontFamily: "ui-monospace, monospace" };
-  const tdS = { padding: "9px 8px", color: T.text };
+  const thS: React.CSSProperties = { textAlign: "left", padding: "9px 8px", fontSize: 10, color: T.textFaint, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 400, fontFamily: "ui-monospace, monospace" };
+  const tdS: React.CSSProperties = { padding: "9px 8px", color: T.text };
   const tipS = { background: T.surface, border: `1px solid ${T.rule}`, borderRadius: 2, fontSize: 12, color: T.text };
+
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importStatus, setImportStatus] = useState<"ok" | "error" | null>(null);
 
   const exportJson = () => {
     const blob = new Blob([JSON.stringify({
@@ -484,16 +534,20 @@ export default function CrmTcoModel() {
     URL.revokeObjectURL(url);
   };
 
-  const importJson = (e) => {
+  const importJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     const r = new FileReader();
     r.onload = () => {
       try {
-        const p = JSON.parse(r.result);
-        if (p.assumptions) setS({ ...D, ...p.assumptions });
+        const p = JSON.parse(r.result as string);
+        if (!p.assumptions) throw new Error("missing assumptions");
+        setS({ ...defaults, ...p.assumptions });
         if (p.horizon) setYears(p.horizon);
-      } catch { /* malformed file ignored */ }
+        setImportStatus("ok");
+      } catch {
+        setImportStatus("error");
+      }
     };
     r.readAsText(f);
     e.target.value = "";
@@ -503,6 +557,7 @@ export default function CrmTcoModel() {
     <div style={{ background: T.bg, minHeight: "100vh", color: T.text, fontFamily: "'Inter', -apple-system, system-ui, sans-serif" }}>
       {/* MASTHEAD */}
       <div style={{ borderBottom: `1px solid ${T.rule}`, padding: "20px 28px 0" }}>
+        <div style={{ maxWidth: MAX_W, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 16 }}>
           <div>
             <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: T.brass, letterSpacing: "0.22em", textTransform: "uppercase", marginBottom: 7 }}>
@@ -518,13 +573,6 @@ export default function CrmTcoModel() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
-            {["conservative", "base", "aggressive"].map((p) => (
-              <button key={p} onClick={() => applyPreset(p)} style={{
-                background: "none", border: `1px solid ${T.rule}`, color: T.textDim,
-                padding: "6px 12px", fontSize: 11, cursor: "pointer", borderRadius: 2,
-                fontFamily: "ui-monospace, monospace", letterSpacing: "0.05em", textTransform: "uppercase",
-              }}>{p}</button>
-            ))}
             <button onClick={() => setMode(mode === "dark" ? "light" : "dark")} aria-label="Toggle color mode" style={{
               background: "none", border: `1px solid ${T.rule}`, color: T.brass,
               padding: "6px 11px", fontSize: 12, cursor: "pointer", borderRadius: 2, fontFamily: "ui-monospace, monospace",
@@ -533,7 +581,7 @@ export default function CrmTcoModel() {
         </div>
 
         <div style={{ display: "flex", gap: 26 }}>
-          {[["output", "Output"], ["config", "Configuration & definitions"]].map(([k, label]) => (
+          {([["output", "Output"], ["config", "Configuration & definitions"]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               background: "none", border: "none", color: tab === k ? T.text : T.textFaint,
               borderBottom: `2px solid ${tab === k ? T.brass : "transparent"}`,
@@ -541,11 +589,12 @@ export default function CrmTcoModel() {
             }}>{label}</button>
           ))}
         </div>
+        </div>
       </div>
 
       {/* ============ OUTPUT ============ */}
       {tab === "output" && (
-        <div style={{ padding: "22px 28px 70px", maxWidth: 1060 }}>
+        <div style={{ padding: "22px 28px 70px", maxWidth: MAX_W, margin: "0 auto" }}>
           <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", marginBottom: 22 }}>
             <div style={{ display: "flex", gap: 5 }}>
               {[3, 5, 7].map((y) => (
@@ -559,7 +608,7 @@ export default function CrmTcoModel() {
               ))}
             </div>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-              {[["summary", "Summary"], ["flow", "Cash flow"], ["risk", "Risk"], ["cloud", "Cloud"], ["ledger", "Ledger"]].map(([k, label]) => (
+              {([["summary", "Summary"], ["flow", "Cash flow"], ["risk", "Risk"], ["cloud", "Cloud"], ["ledger", "Ledger"]] as const).map(([k, label]) => (
                 <button key={k} onClick={() => setView(k)} style={{
                   background: "none", border: "none", color: view === k ? T.text : T.textFaint,
                   borderBottom: `2px solid ${view === k ? T.oxide : "transparent"}`,
@@ -637,8 +686,8 @@ export default function CrmTcoModel() {
                   <LineChart data={cumData} margin={{ top: 6, right: 10, left: 4, bottom: 0 }}>
                     <CartesianGrid stroke={T.surface2} vertical={false} />
                     <XAxis dataKey="year" stroke={T.textFaint} tick={{ fontSize: 11 }} />
-                    <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={fmtM} width={58} />
-                    <Tooltip contentStyle={tipS} formatter={(v) => fmtM(v)} />
+                    <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={(v: number) => fmtM(v)} width={58} />
+                    <Tooltip contentStyle={tipS} formatter={(v: any) => fmtM(Number(v))} />
                     <Line type="monotone" dataKey="Buy" stroke={T.brass} strokeWidth={2} dot={{ r: 3 }} />
                     <Line type="monotone" dataKey="Build" stroke={T.oxide} strokeWidth={2} dot={{ r: 3 }} />
                     {m.beYear && <ReferenceLine x={`Y${m.beYear}`} stroke={T.good} strokeDasharray="3 3" label={{ value: "break-even", fill: T.good, fontSize: 10, position: "top" }} />}
@@ -660,8 +709,8 @@ export default function CrmTcoModel() {
                 <ComposedChart data={chartData} margin={{ top: 6, right: 10, left: 4, bottom: 0 }}>
                   <CartesianGrid stroke={T.surface2} vertical={false} />
                   <XAxis dataKey="year" stroke={T.textFaint} tick={{ fontSize: 11 }} />
-                  <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={fmtM} width={58} />
-                  <Tooltip contentStyle={tipS} formatter={(v) => fmtM(v)} />
+                  <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={(v: number) => fmtM(v)} width={58} />
+                  <Tooltip contentStyle={tipS} formatter={(v: any) => fmtM(Number(v))} />
                   <Bar dataKey="Buy" fill={T.brass} opacity={0.85} />
                   <Bar dataKey="Build" fill={T.oxide} opacity={0.85} />
                 </ComposedChart>
@@ -722,9 +771,9 @@ export default function CrmTcoModel() {
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={riskData} layout="vertical" margin={{ top: 6, right: 20, left: 140, bottom: 0 }}>
                   <CartesianGrid stroke={T.surface2} horizontal={false} />
-                  <XAxis type="number" stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={fmtM} />
+                  <XAxis type="number" stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={(v: number) => fmtM(v)} />
                   <YAxis type="category" dataKey="name" stroke={T.textFaint} tick={{ fontSize: 11 }} width={136} />
-                  <Tooltip contentStyle={tipS} formatter={(v) => fmtM(v)} />
+                  <Tooltip contentStyle={tipS} formatter={(v: any) => fmtM(Number(v))} />
                   <Bar dataKey="value" fill={T.oxide} opacity={0.85} />
                 </BarChart>
               </ResponsiveContainer>
@@ -754,8 +803,8 @@ export default function CrmTcoModel() {
                 <BarChart data={cloudCompare} margin={{ top: 6, right: 10, left: 4, bottom: 0 }}>
                   <CartesianGrid stroke={T.surface2} vertical={false} />
                   <XAxis dataKey="provider" stroke={T.textFaint} tick={{ fontSize: 12 }} />
-                  <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={fmtM} width={58} />
-                  <Tooltip contentStyle={tipS} formatter={(v) => fmtM(v)} />
+                  <YAxis stroke={T.textFaint} tick={{ fontSize: 11 }} tickFormatter={(v: number) => fmtM(v)} width={58} />
+                  <Tooltip contentStyle={tipS} formatter={(v: any) => fmtM(Number(v))} />
                   <Bar dataKey="cost">
                     {cloudCompare.map((e, i) => (
                       <Cell key={i} fill={e.provider.toLowerCase() === s.cloudProvider ? T.brass : T.slate} opacity={0.85} />
@@ -768,7 +817,7 @@ export default function CrmTcoModel() {
               <SecHead T={T}>Sizing derivation</SecHead>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <tbody>
-                  {[
+                  {([
                     ["Total records", fmtN(s.vAccounts + s.vContacts + s.vOpps + s.vActivities)],
                     ["Hot storage estimate", `${fmtN((s.vAccounts + s.vContacts + s.vOpps + s.vActivities) * 2200 * (1 + s.retentionYears * 0.12) / 1e9)} GB`],
                     ["Availability model", s.haMode],
@@ -776,7 +825,7 @@ export default function CrmTcoModel() {
                     ["Non-production environments", `${s.nonProdEnvs} at 40% of prod`],
                     ["Committed-use discount", pct(s.cudDiscount)],
                     ["Year-1 annual cloud spend", fmtM(m.cloudY1)],
-                  ].map(([k, v]) => (
+                  ] as [string, string][]).map(([k, v]) => (
                     <tr key={k} style={{ borderBottom: `1px solid ${T.surface2}` }}>
                       <td style={{ ...tdS, color: T.textDim }}>{k}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "ui-monospace, monospace" }}>{v}</td>
@@ -799,7 +848,7 @@ export default function CrmTcoModel() {
               <SecHead T={T}>Derived figures</SecHead>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginBottom: 26 }}>
                 <tbody>
-                  {[
+                  {([
                     ["Seats modeled (Y1)", fmtN(m.seatsY0)],
                     ["Build-phase FTE", m.buildEngHeads.toFixed(1)],
                     ["Run-phase FTE", m.runEngHeads.toFixed(1)],
@@ -811,7 +860,7 @@ export default function CrmTcoModel() {
                     ["Risk load applied", fmtM(m.riskTotal)],
                     [`NPV · buy · ${years}yr @ ${pct(s.discountRate)}`, fmtM(m.npvBuy)],
                     [`NPV · build · ${years}yr @ ${pct(s.discountRate)}`, fmtM(m.npvBuild)],
-                  ].map(([k, v]) => (
+                  ] as [string, string][]).map(([k, v]) => (
                     <tr key={k} style={{ borderBottom: `1px solid ${T.surface2}` }}>
                       <td style={{ ...tdS, color: T.textDim }}>{k}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "ui-monospace, monospace" }}>{v}</td>
@@ -831,22 +880,6 @@ export default function CrmTcoModel() {
                 market of people who already know the product, and the fact that its failure modes are
                 somebody else's problem at 3am.
               </div>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button onClick={exportJson} style={{
-                  background: "none", border: `1px solid ${T.brass}`, color: T.brass,
-                  padding: "9px 18px", fontSize: 12, cursor: "pointer", borderRadius: 2,
-                  fontFamily: "ui-monospace, monospace", letterSpacing: "0.05em",
-                }}>Export assumptions</button>
-                <label style={{
-                  border: `1px solid ${T.rule}`, color: T.textDim, padding: "9px 18px",
-                  fontSize: 12, cursor: "pointer", borderRadius: 2,
-                  fontFamily: "ui-monospace, monospace", letterSpacing: "0.05em",
-                }}>
-                  Import assumptions
-                  <input type="file" accept="application/json" onChange={importJson} style={{ display: "none" }} />
-                </label>
-              </div>
             </>
           )}
         </div>
@@ -854,7 +887,7 @@ export default function CrmTcoModel() {
 
       {/* ============ CONFIG ============ */}
       {tab === "config" && (
-        <div style={{ padding: "24px 28px 80px", maxWidth: 1080 }}>
+        <div style={{ padding: "24px 28px 80px", maxWidth: MAX_W, margin: "0 auto" }}>
           <div style={{
             background: T.surface, border: `1px solid ${T.rule}`, borderLeft: `3px solid ${T.slate}`,
             padding: "14px 18px", marginBottom: 30, fontSize: 12, color: T.textDim,
@@ -870,14 +903,44 @@ export default function CrmTcoModel() {
             of your company.
           </div>
 
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 30 }}>
+            <button onClick={exportJson} style={{
+              background: "none", border: `1px solid ${T.brass}`, color: T.brass,
+              padding: "9px 18px", fontSize: 12, cursor: "pointer", borderRadius: 2,
+              fontFamily: "ui-monospace, monospace", letterSpacing: "0.05em",
+            }}>Export assumptions</button>
+            <button
+              type="button"
+              onClick={() => { setImportStatus(null); importInputRef.current?.click(); }}
+              style={{
+                background: "none", border: `1px solid ${T.rule}`, color: T.textDim,
+                padding: "9px 18px", fontSize: 12, cursor: "pointer", borderRadius: 2,
+                fontFamily: "ui-monospace, monospace", letterSpacing: "0.05em",
+              }}
+            >Import assumptions</button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              onChange={importJson}
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+            />
+            {importStatus === "ok" && (
+              <span style={{ fontSize: 12, color: T.good, fontFamily: "ui-monospace, monospace" }}>Imported ✓</span>
+            )}
+            {importStatus === "error" && (
+              <span style={{ fontSize: 12, color: T.warn, fontFamily: "ui-monospace, monospace" }}>Couldn't read that file — expects JSON exported from this tool.</span>
+            )}
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(310px, 1fr))", gap: "0 44px" }}>
             <div>
               <Group num="01" title="Organization & seats" T={T}
                 note="Seat counts drive license cost on the buy path and change-management cost on the build path. Count people who will actually log in, not total headcount.">
-                {[["salesAe", "Sales AE + leadership"], ["sdr", "SDR / BDR"], ["se", "Sales engineering"],
+                {([["salesAe", "Sales AE + leadership"], ["sdr", "SDR / BDR"], ["se", "Sales engineering"],
                   ["salesOps", "Sales ops / deal desk"], ["cs", "Customer success"], ["ps", "Professional services"],
                   ["support", "Support"], ["pmm", "Product marketing"], ["mktg", "Marketing"],
-                  ["readonly", "Finance / exec read-only"]].map(([k, label]) => (
+                  ["readonly", "Finance / exec read-only"]] as [keyof Seats, string][]).map(([k, label]) => (
                   <Field key={k} label={label} k={k} T={T}>
                     <Num T={T} value={s.seats[k]} onChange={(v) => setSeat(k, v)} />
                   </Field>
@@ -980,7 +1043,7 @@ export default function CrmTcoModel() {
                 note="Infrastructure sizing derives from record counts and seat concurrency rather than a flat estimate. Activity volume usually dominates storage.">
                 <Field label="Provider" k="cloudProvider" T={T}>
                   <span style={{ display: "flex", gap: 5 }}>
-                    {["gcp", "aws", "azure"].map((p) => (
+                    {(["gcp", "aws", "azure"] as CloudProvider[]).map((p) => (
                       <button key={p} type="button" onClick={(e) => { e.preventDefault(); set("cloudProvider", p); }} style={{
                         flex: 1, background: s.cloudProvider === p ? T.surface2 : "none",
                         border: `1px solid ${s.cloudProvider === p ? T.brass : T.rule}`,
@@ -993,7 +1056,7 @@ export default function CrmTcoModel() {
                 </Field>
                 <Field label="Availability model" k="haMode" T={T}>
                   <span style={{ display: "flex", gap: 5 }}>
-                    {["active-active", "active-passive"].map((h) => (
+                    {(["active-active", "active-passive"] as HaMode[]).map((h) => (
                       <button key={h} type="button" onClick={(e) => { e.preventDefault(); set("haMode", h); }} style={{
                         flex: 1, background: s.haMode === h ? T.surface2 : "none",
                         border: `1px solid ${s.haMode === h ? T.brass : T.rule}`,
@@ -1063,8 +1126,8 @@ export default function CrmTcoModel() {
 /* ============================================================
    TORNADO
    ============================================================ */
-function Tornado({ s, years, base, T }) {
-  const vars = [
+function Tornado({ s, years, base, T }: { s: Assumptions; years: number; base: number; T: ThemeColors }) {
+  const vars: { key: keyof Assumptions; label: string; lo: number; hi: number }[] = [
     { key: "aiVelocity", label: "AI build velocity", lo: 1.3, hi: 3.5 },
     { key: "sfDiscount", label: "Incumbent discount", lo: 0.1, hi: 0.6 },
     { key: "buildMonths", label: "Build duration", lo: 10, hi: 30 },
@@ -1087,32 +1150,42 @@ function Tornado({ s, years, base, T }) {
 
   return (
     <div>
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        fontSize: 10, fontFamily: "ui-monospace, monospace", letterSpacing: "0.06em",
+        textTransform: "uppercase", marginBottom: 12,
+      }}>
+        <span style={{ color: T.oxide }}>← Favors building</span>
+        <span style={{ color: T.textFaint }}>Current scenario</span>
+        <span style={{ color: T.brass }}>Favors buying →</span>
+      </div>
       {rows.map((r) => {
         const wLo = (Math.abs(r.lo) / max) * 48;
         const wHi = (Math.abs(r.hi) / max) * 48;
         return (
-          <div key={r.label} style={{ marginBottom: 9 }}>
-            <div style={{ fontSize: 11, color: T.textDim, marginBottom: 3 }}>
-              {r.label} <span style={{ color: T.textFaint, fontFamily: "ui-monospace, monospace" }}>±{fmtM(r.swing / 2)}</span>
+          <div key={r.label} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.textDim, marginBottom: 3 }}>
+              <span>{r.label}</span>
+              <span style={{ color: T.textFaint, fontFamily: "ui-monospace, monospace" }}>{fmtM(r.swing)} range</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", height: 15 }}>
               <div style={{ width: "50%", display: "flex", justifyContent: "flex-end" }}>
-                <div style={{ width: `${r.lo < 0 ? wLo : 0}%`, height: 13, background: T.good, opacity: 0.7 }} />
-                <div style={{ width: `${r.hi < 0 ? wHi : 0}%`, height: 13, background: T.good, opacity: 0.7 }} />
+                <div style={{ width: `${r.lo < 0 ? wLo : 0}%`, height: 13, background: T.oxide, opacity: 0.75 }} />
+                <div style={{ width: `${r.hi < 0 ? wHi : 0}%`, height: 13, background: T.oxide, opacity: 0.75 }} />
               </div>
-              <div style={{ width: 1, height: 15, background: T.rule }} />
+              <div style={{ width: 2, height: 19, background: T.textFaint }} />
               <div style={{ width: "50%", display: "flex" }}>
-                <div style={{ width: `${r.lo > 0 ? wLo : 0}%`, height: 13, background: T.oxide, opacity: 0.7 }} />
-                <div style={{ width: `${r.hi > 0 ? wHi : 0}%`, height: 13, background: T.oxide, opacity: 0.7 }} />
+                <div style={{ width: `${r.lo > 0 ? wLo : 0}%`, height: 13, background: T.brass, opacity: 0.75 }} />
+                <div style={{ width: `${r.hi > 0 ? wHi : 0}%`, height: 13, background: T.brass, opacity: 0.75 }} />
               </div>
             </div>
           </div>
         );
       })}
       <div style={{ fontSize: 11, color: T.textFaint, marginTop: 12, lineHeight: 1.6, maxWidth: 640 }}>
-        Bars left of center favor building; right of center favor buying. Each bar shows how far the
-        answer moves when that single assumption swings across its plausible range while everything
-        else holds. The top two or three are the only ones worth arguing about.
+        Each bar shows how far today's answer would move if that one input, alone, swung to the low or
+        high end of its plausible range. Longer bar means more leverage over the decision — the top two
+        or three are the only ones worth arguing about.
       </div>
     </div>
   );

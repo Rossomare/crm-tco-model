@@ -54,7 +54,7 @@ npm install react react-dom recharts
 The component is a single self-contained file with no backend, no environment variables, and no persistence. All state lives in React.
 
 1. Scaffold a Vite or Next.js app
-2. Drop `crm-tco-model.jsx` into your components directory
+2. Drop `App.tsx` into your components directory
 3. Import and render it as your root page
 4. Push to GitHub and import the repo in Vercel
 
