@@ -7,4 +7,4 @@ dist-ssr
 .tmp.driveupload/
 .tmp.drivedownload/
 *.tsbuildinfo
-.vscode
+.vscode/
